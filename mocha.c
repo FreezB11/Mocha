@@ -4,11 +4,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
-
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #define CHANNEL 3
-
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
@@ -21,20 +19,9 @@ static const char *ascii_map = "@%#*+=-:. ";
 int map_len = 10;
 
 /// @brief the rendering mode for image and videoooo
-typedef enum {
-    mASCII,
-    mUNICODE
-} renderMode;
-
-typedef enum {
-    cNONE,
-    cRGB
-} colorMode;
-
-typedef enum {
-    mVideo,
-    mImage
-} format;
+typedef enum {mASCII,mUNICODE} renderMode;
+typedef enum {cNONE,cRGB} colorMode;
+typedef enum {mVideo,mImage} format;
 
 typedef struct {
     const char *file;
@@ -46,6 +33,7 @@ typedef struct {
     int fps;
 } config;
 
+// i will use this later but yea i didnnt yet use this
 typedef struct{
     int* x_map;
     int* y_map;
@@ -79,12 +67,9 @@ static void sleep_ms(int ms){
 }
 
 // maybe i should optimize this
-static void clear_screen() {
-    write(STDOUT_FILENO, "\x1b[H\x1b[2J", 7);
-}
+static void clear_screen() {write(STDOUT_FILENO, "\x1b[H\x1b[2J", 7);}
 
-
-void ascii_print_rgb(uint8_t *img, int w, int h, config* cfg) {
+void ascii_print(uint8_t *img, int w, int h, config* cfg) {
     const float aspect = 0.5f;
     if(cfg->out_h == 0) {
         cfg->out_h = (int)(h * cfg->out_w / (float)w * aspect);
@@ -219,7 +204,7 @@ void print_image(config* cfg){
 
     clear_screen();
     if(cfg->mode == mASCII) {
-        ascii_print_rgb(img, w, h, cfg);
+        ascii_print(img, w, h, cfg);
     } else {
         // 3. PASS 'ops' INSTEAD OF '0'
         unicode_print_rgb(img, w, h, cfg, ops);
@@ -317,7 +302,7 @@ void print_video(config* cfg) {
 
                 clear_screen();
                 if(cfg->mode == mASCII) {
-                    ascii_print_rgb(rgb_frame->data[0], out_w, out_h, cfg);
+                    ascii_print(rgb_frame->data[0], out_w, out_h, cfg);
                 } else {
                     unicode_print_rgb(rgb_frame->data[0], out_w, out_h, cfg, ops);
                 }
