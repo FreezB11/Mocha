@@ -46,6 +46,13 @@ typedef struct {
     int fps;
 } config;
 
+typedef struct{
+    int* x_map;
+    int* y_map;
+    size_t buf_capacity;
+    char* out_buf;
+}precomp;
+
 static void print_usage() {
     printf(
         "Example usage: mocha -i <image> [options]\n"
@@ -73,8 +80,9 @@ static void sleep_ms(int ms){
 
 // maybe i should optimize this
 static void clear_screen() {
-    printf("\x1b[H\x1b[2J");
+    write(STDOUT_FILENO, "\x1b[H\x1b[2J", 7);
 }
+
 
 void ascii_print_rgb(uint8_t *img, int w, int h, config* cfg) {
     const float aspect = 0.5f;
@@ -131,7 +139,12 @@ void ascii_print_rgb(uint8_t *img, int w, int h, config* cfg) {
     }
 }
 
-void unicode_print_rgb(uint8_t *img, int w, int h, config* cfg) {
+void unicode_print_rgb(uint8_t *img, int w, int h, config* cfg, precomp* ops) {
+    // printf("we entered the upr function\n");
+    char* p = ops->out_buf;
+    p += sprintf(p, "\x1b[H");
+    // we are using this aspect to make the video fit the terminal and ascii height to width 
+    // ps i find it perfect on my terminal tho i am using the half block
     const float aspect = 0.5f;
     if(cfg->out_h == 0){
         cfg->out_h = (int)(h* cfg->out_w / (float)w * aspect);
@@ -163,32 +176,63 @@ void unicode_print_rgb(uint8_t *img, int w, int h, config* cfg) {
             unsigned char g1 = img[i1 + 1];
             unsigned char b1 = img[i1 + 2];
 
-            printf("\x1b[38;2;%u;%u;%um", r0, g0, b0);
-            printf("\x1b[48;2;%u;%u;%um", r1, g1, b1);
-            printf("▀");
+            p += sprintf(p,"\x1b[38;2;%u;%u;%um\x1b[48;2;%u;%u;%um▀", r0, g0, b0, r1, g1, b1);
+            // printf("\x1b[48;2;%u;%u;%um", r1, g1, b1);
+            // printf("▀");
         }
-        printf("\x1b[0m\n");
+        p += sprintf(p,"\x1b[0m\n");
     }
+    fflush(stdout);
+
+    write(STDOUT_FILENO, ops->out_buf, p - ops->out_buf);
 }
 
 void print_image(config* cfg){
     int h, w, c;
     unsigned char* img = stbi_load(cfg->file, &w, &h, &c, CHANNEL);
+    
     if(!img){
         printf("sorry there was a issue with loading image\n");
         return;
+    }
+
+    // 1. MUST calculate height before allocating ops maps
+    if(cfg->out_h == 0) {
+        const float aspect = 0.5f;
+        cfg->out_h = (int)(h * cfg->out_w / (float)w * aspect);
+    }
+
+    precomp ops_struct; 
+    precomp* ops = &ops_struct;
+
+    // 2. Allocate and fill maps
+    ops->x_map = malloc(cfg->out_w * sizeof(int));
+    ops->y_map = malloc(cfg->out_h * 2 * sizeof(int));
+    ops->out_buf = malloc(cfg->out_h * cfg->out_w * 128 + 2048); // Increased buffer size for safety
+
+    for(int j = 0; j < cfg->out_w; j++){
+        ops->x_map[j] = (j * w / cfg->out_w) * CHANNEL;
+    }
+    for(int i = 0; i < cfg->out_h * 2; i++){
+        ops->y_map[i] = (i * h / (cfg->out_h * 2)) * w * CHANNEL;
     }
 
     clear_screen();
     if(cfg->mode == mASCII) {
         ascii_print_rgb(img, w, h, cfg);
     } else {
-        unicode_print_rgb(img, w, h, cfg);
+        // 3. PASS 'ops' INSTEAD OF '0'
+        unicode_print_rgb(img, w, h, cfg, ops);
     }
 
+    // Clean up
+    free(ops->x_map);
+    free(ops->y_map);
+    free(ops->out_buf);
     stbi_image_free(img);
 }
 
+// currently there is a buffering issue so i have to think how we improve the write speed to be better 
 void print_video(config* cfg) {
     avformat_network_init();
 
@@ -226,6 +270,9 @@ void print_video(config* cfg) {
 
     int out_w = cfg->out_w;
     int out_h = cfg->out_h;
+
+    
+
     if (out_h == 0) {
         out_h = (int)(codec_ctx->height * out_w / (float)codec_ctx->width * 0.5f);
         cfg->out_h = out_h;
@@ -245,6 +292,20 @@ void print_video(config* cfg) {
     AVPacket packet;
     av_init_packet(&packet);
 
+    precomp ops_struct; // Allocate on stack
+    precomp* ops = &ops_struct; // Pointer to that stack memory
+
+    ops->x_map = malloc(cfg->out_w * sizeof(int));
+    ops->y_map = malloc(cfg->out_h * 2 * sizeof(int));
+    ops->out_buf = malloc(cfg->out_h * cfg->out_w * 64 + 1024);
+        for(int j = 0; j < cfg->out_w; j++){
+            ops->x_map[j] = (j* out_w / cfg->out_w) * CHANNEL;
+        }
+        for(int i = 0; i < cfg->out_h*2; i++){
+            ops->y_map[i] = (i* out_h / (cfg->out_h *2)) * out_w * CHANNEL;
+        }
+        ops->buf_capacity = cfg->out_h * cfg->out_w * 64 + 1204;
+        // ops->out_buf = malloc(ops->buf_capacity);
     while (av_read_frame(fmt_ctx, &packet) >= 0) {
         if (packet.stream_index == video_stream_index) {
             avcodec_send_packet(codec_ctx, &packet);
@@ -258,7 +319,7 @@ void print_video(config* cfg) {
                 if(cfg->mode == mASCII) {
                     ascii_print_rgb(rgb_frame->data[0], out_w, out_h, cfg);
                 } else {
-                    unicode_print_rgb(rgb_frame->data[0], out_w, out_h, cfg);
+                    unicode_print_rgb(rgb_frame->data[0], out_w, out_h, cfg, ops);
                 }
 
                 sleep_ms(1000 / cfg->fps);
@@ -272,6 +333,8 @@ void print_video(config* cfg) {
     av_frame_free(&frame);
     avcodec_free_context(&codec_ctx);
     avformat_close_input(&fmt_ctx);
+    free(ops->x_map);
+    free(ops->y_map);
 }
 
 void print_image_or_video(config* cfg){
