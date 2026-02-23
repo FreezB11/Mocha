@@ -167,7 +167,7 @@ void unicode_print_rgb(uint8_t *img, int w, int h, config* cfg, precomp* ops) {
         }
         p += sprintf(p,"\x1b[0m\n");
     }
-    fflush(stdout);
+    if(cfg->f == mImage) fflush(stdout);
 
     write(STDOUT_FILENO, ops->out_buf, p - ops->out_buf);
 }
